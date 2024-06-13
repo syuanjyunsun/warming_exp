@@ -7,16 +7,33 @@ library(dplyr)
 library(emmeans)
 library(ggplot2)
 library(ggpubr)
+library(multcomp)
+library(multcompView)
+
 
 data=read.csv("warming trial data.csv")
 data=data[data$Notes!="relatives",]
 data$tr <- factor(data$tr, levels=c("control", " +2°C", " +4°C"))
+data$newtr <- as.numeric(data$newtr)
+
+####test for differences in carcass mass
+anova_model <- aov(carc.wt ~ tr, data = data)
+summary(anova_model)
+tukey_result <- TukeyHSD(anova_model)
+
+# Print the Tukey HSD results
+print(tukey_result)
 
 ####probability of brood ball success####
-model=glmer(ball_success~tr+carc.wt+(1|male)+(1|female),family=binomial,data=data)
+# check if there is issue of imbalance of 0s and 1s.
+ball_success_counts <- table(data$ball_success)
+
+# Perform a chi-squared goodness-of-fit test
+chisq.test(ball_success_counts, p = c(0.5, 0.5))
+
+model=glmer(ball_success~newtr+carc.wt+(1|male)+(1|female),family = binomial(link = "cloglog"),data=data)
 Anova(model,type=3)
-a=emmeans (model,  ~ tr, adjust="tukey")
-pairs(a)
+summary(model)
 
 summary_data <- data %>%
   group_by(tr) %>%
@@ -27,32 +44,50 @@ summary_data <- data %>%
 
 treatment_colors <- c("#479BD5","#fdae61", "#E4191C")
 
-success <- ggplot(data, aes(x = tr, y = ball_success,fill=tr)) +
-  geom_point(aes(color = tr), position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8), size = 2, alpha = 0.4) + # Jittered data points
+success <- ggplot(data, aes(x = tr, y = ball_success, fill = tr)) +
+  geom_point(aes(color = tr), position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8), size = 2, alpha = 0.6) + # Jittered data points
   geom_point(data = summary_data, aes(x = tr, y = mean_success, color = tr), shape = 16, size = 5) +  # Mean points
   geom_errorbar(data = summary_data, aes(y = NULL, ymin = mean_success - se_success, ymax = mean_success + se_success, color = tr), width = 0.1) + 
   theme_classic() +
   scale_fill_manual(values = treatment_colors) +  # Specifying fill colors
   scale_color_manual(values = treatment_colors) + 
-  labs(y = "Probability of carcass preparation") +
-  labs(x = "Temperature treatments")+ 
-  scale_y_continuous(limits=c(0,1))+
+  labs(y = "Proportion of carcasses prepared") +
+  labs(x = "Temperature treatments") + 
+  scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, by = 0.2)) +
   theme(
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
-    plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
+print(success)
+
+library(ggplot2)
+custom_colors <- c("#479BD5","#fdae61", "#E4191C")
+success <- ggplot(data, aes(x = newtr, y = ball_success)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = binomial(link = "cloglog")), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2,linetype="dashed") +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Proportion of carcasses prepared") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits = c(0, 1.05), breaks = seq(0, 1, by = 0.2)) +
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
 print(success)
 
 ####carcass preparation time####
 data_ball=data[data$ball_success=="1",]
-model=glmer(log(ball+1)~tr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_ball)
+model=glmer(ball~newtr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_ball)
 Anova(model,type=3)
-
-a=emmeans (model,  ~ tr, adjust="tukey")
-pairs(a)
+summary(model)
 
 summary_data <- data_ball %>%
   group_by(tr) %>%
@@ -77,18 +112,38 @@ ball <- ggplot(data_ball, aes(x = tr, y = ball,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  # Add significance letters
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_ball + summary_data$se_ball) + 0.05, label = .group), 
+            vjust = -8, hjust = 0.7, size = 5, color = "black")
+
+custom_colors <- c("#479BD5","#fdae61", "#E4191C")
+ball <- ggplot(data_ball, aes(x = newtr, y = ball)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "gaussian"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Time until carcass preparation (days)") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(0,4))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
 print(ball)
+
 
 ggarrange(success,ball, labels= c("(a)", "(b)"),ncol = 2, nrow = 1,widths=c(1,1),common.legend = F)
 
 ####egg laying time####
 data_egg=data[data$clutchsize!="0",]
-model=glmer(log(egg+1)~tr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_egg)
+model=glmer(log(egg+1)~newtr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_egg)
 Anova(model,type=3)
-a=emmeans (model,  ~ tr, adjust="tukey")
-pairs(a)
+summary(model)
 
 summary_data <- data_egg %>%
   group_by(tr) %>%
@@ -114,18 +169,30 @@ egg <- ggplot(data_egg, aes(x = tr, y = egg,fill=tr)) +
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
     legend.position="none")
+print(egg)
+
+custom_colors <- c("#479BD5","#fdae61", "#E4191C")
+egg <- ggplot(data_egg, aes(x = newtr, y = egg)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "gaussian"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Time until first egg (days)") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(0,4))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
 print(egg)
 
 ####clutch size####
-model=glmer(clutchsize~tr+carc.wt+(1|male)+(1|female),family=poisson,data=data)
+model=glmer(clutchsize~newtr+carc.wt+(1|male)+(1|female),family=poisson,data=data)
 Anova(model,type=3)
-
-#test for overdispersion
-sum(resid(model, type = "pearson")^2)/model$df.resid
-
-a=emmeans (model,  ~ tr, adjust="tukey")
-pairs(a)
 
 #plot
 summary_data <- data %>%
@@ -151,7 +218,29 @@ clutchsize <- ggplot(data, aes(x = tr, y = clutchsize,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_clutchsize + summary_data$se_clutchsize) + 0.05, label = .group), 
+            vjust = -11, hjust = 0.7, size = 5, color = "black")
+
+print(clutchsize)
+
+custom_colors <- c("#479BD5","#fdae61", "#E4191C")
+
+clutchsize <- ggplot(data, aes(x = newtr, y = clutchsize)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "poisson"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Clutch size") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(0,50))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
 print(clutchsize)
 
@@ -160,7 +249,7 @@ print(clutchsize)
 data1=data[data$tr!=" +4°C",]
 data2=data1[data1$clutchsize!="0",]#those have laid eggs
 
-model=glmer(hatching_success~tr+carc.wt+(1|male)+(1|female),family=binomial,data=data2)
+model=glmer(hatching_success~newtr+carc.wt+(1|male)+(1|female),family=binomial,data=data2)
 Anova(model,type=3)
 
 data3=data[data$clutchsize!="0",]#those have laid eggs
@@ -193,10 +282,9 @@ print(hatching_success)
 
 ####larva hatching time####
 data_larva=data[data$hatching_success!="0",]
-model=glmer(log(larva+1)~tr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_larva)
+model=glmer(log(larva+1)~newtr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_larva)
 Anova(model,type=3)
-a=emmeans (model,  ~ tr, adjust="tukey")
-pairs(a)
+summary(model)
 
 summary_data <- data_larva %>%
   group_by(tr) %>%
@@ -221,50 +309,39 @@ larva <- ggplot(data_larva, aes(x = tr, y = larva,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_larva + summary_data$se_larva) + 0.05, label = .group), 
+            vjust = -11, hjust = 0.7, size = 5, color = "black")
+
 
 print(larva)
 
+custom_colors <- c("#479BD5","#fdae61")
 
-####probability of breeding success####
-data1=data[data$tr!=" +4°C",]
-model=glmer(success~tr+carc.wt+(1|male)+(1|female),family=binomial,data=data1)
-Anova(model,type=3)
-
-#success
-summary_data <- data %>%
-  group_by(tr) %>%
-  summarise(
-    mean_success = mean(success),
-    se_success = sd(success)/sqrt(n())
-  ) 
-
-treatment_colors <- c("#479BD5","#fdae61", "#E4191C")
-
-success <- ggplot(data, aes(x = tr, y = success,fill=tr)) +
-  geom_point(aes(color = tr), position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8), size = 2, alpha = 0.4) + # Jittered data points
-  geom_point(data = summary_data, aes(x = tr, y = mean_success, color = tr), shape = 16, size = 5) +  # Mean points
-  geom_errorbar(data = summary_data, aes(y = NULL, ymin = mean_success - se_success, ymax = mean_success + se_success, color = tr), width = 0.1) + 
+larva <- ggplot(data_larva, aes(x = newtr, y = larva)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "gaussian"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
   theme_classic() +
-  scale_fill_manual(values = treatment_colors) +  # Specifying fill colors
-  scale_color_manual(values = treatment_colors) + 
-  labs(y = "Probability of breeding success") +
-  labs(x = "Temperature treatments")+ 
-  scale_y_continuous(limits=c(0,1))+
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Time until the first larvae hatched (days)") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(4,6.5))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
   theme(
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
-    plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
-
-print(success)
+print(larva)
 
 ####brood size####
 data_brood=data1[data1$hatching_success!="0",]
 
-model=glmer(broodsize~tr+carc.wt+(1|male)+(1|female),family=poisson,data=data_brood)
+model=glmer(broodsize~newtr+carc.wt+(1|male)+(1|female),family=poisson,data=data_brood)
 Anova(model,type=3)
+summary(model)
 
 #broodsize
 summary_data <- data_brood %>%
@@ -290,14 +367,35 @@ broodsize <- ggplot(data_brood, aes(x = tr, y = broodsize,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_broodsize + summary_data$se_broodsize) + 0.05, label = .group), 
+            vjust = -7, hjust = 0.7, size = 5, color = "black")
 
+print(broodsize)
+
+custom_colors <- c("#479BD5","#fdae61")
+broodsize <- ggplot(data_brood, aes(x = newtr, y = broodsize)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "poisson"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Brood size") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(0,50))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 
 print(broodsize)
 
 ####brood mass####
-model=glmer(log(broodmass+1)~tr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_brood)
+model=glmer(log(broodmass+1)~newtr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_brood)
 Anova(model,type=3)
+summary(model)
 
 summary_data <- data_brood %>%
   group_by(tr) %>%
@@ -322,30 +420,51 @@ broodmass <- ggplot(data_brood, aes(x = tr, y = broodmass,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_broodmass + summary_data$se_broodmass) + 0.05, label = .group), 
+            vjust = -7, hjust = 0.7, size = 5, color = "black")
 
+print(broodmass)
+
+custom_colors <- c("#479BD5","#fdae61")
+broodmass <- ggplot(data_brood, aes(x = newtr, y = broodmass)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "gaussian"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2) +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Brood mass (g)") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(0,10))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
 print(broodmass)
 
 ####avgmass by broodsize####
 data_avg=data1[data1$success=="1",]
-model=glmer(avgmass~tr+broodsize+(1|male)+(1|female),family=gaussian,data=data_avg)
+model=glmer(avgmass~newtr+broodsize+(1|male)+(1|female),family=gaussian,data=data_avg)
 Anova(model,type=3)
+summary(model)
 
 avgmass <- ggplot(data_avg, aes(x=broodsize, y=avgmass)) +
-  geom_point(aes(color=tr), size=2, alpha=0.4) +
+  geom_point(aes(color=tr), size=2, alpha=0.6) +
   geom_smooth(data=subset(data_avg, tr=="control"),
               aes(fill="control", color="control", y=avgmass, x=broodsize),
               method="glm",
               method.args=list(family="gaussian"),
               se=T,
-              alpha=0.3,
+              alpha=0.2,
               size=1) +
   geom_smooth(data=subset(data_avg, tr==" +2°C"),
               aes(fill=" +2°C", color=" +2°C", y=avgmass, x=broodsize),
               method="glm",
               method.args=list(family="gaussian"),
               se=T,
-              alpha=0.3,
+              alpha=0.2,
               size=1) +
   scale_color_manual(values=c(" +2°C"="#fdae61", "control"="#3288bd")) +
   scale_fill_manual(values=c(" +2°C"="#fdae61", "control"="#3288bd")) +
@@ -366,8 +485,9 @@ ggarrange(clutchsize,broodsize,broodmass,avgmass,labels= c("(a)", "(b)","(c)","(
 
 
 ####time to dispersal####
-model=glmer(log(dispersal+1)~tr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_avg)
+model=glmer(log(dispersal+1)~newtr+carc.wt+(1|male)+(1|female),family=gaussian,data=data_avg)
 Anova(model,type=3)
+summary(model)
 
 summary_data <- data_avg %>%
   group_by(tr) %>%
@@ -379,7 +499,7 @@ summary_data <- data_avg %>%
 treatment_colors <- c("#479BD5","#fdae61")
 
 dispersal <- ggplot(data_larva, aes(x = tr, y = dispersal,fill=tr)) +
-  geom_point(aes(color = tr), position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8), size = 2, alpha = 0.4) + # Jittered data points
+  geom_point(aes(color = tr), position = position_jitterdodge(jitter.width = 0.4, dodge.width = 0.8), size = 2, alpha = 0.6) + # Jittered data points
   geom_point(data = summary_data, aes(x = tr, y = mean_dispersal, color = tr), shape = 16, size = 5) +  # Mean points
   geom_errorbar(data = summary_data, aes(y = NULL, ymin = mean_dispersal - se_dispersal, ymax = mean_dispersal + se_dispersal, color = tr), width = 0.1) + 
   theme_classic() +
@@ -392,9 +512,32 @@ dispersal <- ggplot(data_larva, aes(x = tr, y = dispersal,fill=tr)) +
     axis.text = element_text(size = 14),       
     axis.title = element_text(size = 16),
     plot.title=element_text(face = "bold", size = 16),
-    legend.position="none")
+    legend.position="none")+
+  geom_text(data = cld_df, aes(x = tr, y = max(summary_data$mean_dispersal + summary_data$se_dispersal) + 0.05, label = .group), 
+            vjust = 0, hjust = 0.7, size = 5, color = "black")
+
 
 print(dispersal)
+
+custom_colors <- c("#479BD5","#fdae61")
+dispersal <- ggplot(data_larva, aes(x = newtr, y = dispersal)) +
+  geom_point(aes(color = newtr), position = position_jitter(width = 0.4, height = 0), size = 2, alpha = 0.6) +  # Jittered data points
+  stat_smooth(method = "glm", method.args = list(family = "gaussian"), se = TRUE, color = "black", fill = "darkgray", alpha = 0.2,linetype = "dashed") +  # Regression line with confidence interval
+  theme_classic() +
+  scale_color_gradientn(colors = custom_colors) +
+  labs(y = "Time until larval dispersal (days)") +
+  labs(x = "Temperature treatments (°C)") + 
+  scale_y_continuous(limits=c(8,12))+
+  scale_x_continuous(breaks = c(18, 20, 22)) +
+  theme(
+    axis.text = element_text(size = 14),       
+    axis.title = element_text(size = 16),
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "none"
+  ) 
+
+print(dispersal)
+
 
 ggarrange(egg,larva,dispersal,labels= c("(a)", "(b)","(c)"),ncol = 3, nrow = 1,widths=c(1,1),common.legend = F)
 
